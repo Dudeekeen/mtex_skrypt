@@ -1,0 +1,326 @@
+% ===================== 0. PROJEKT I ŚCIEŻKA =====================
+
+modelInfo = 'Kod poprawiony – wersja STABILNA MTEX (PF osobne figury)';
+disp(modelInfo)
+
+projAnswer = inputdlg('Podaj nazwę projektu:', 'Nazwa projektu', [1 50]);
+if isempty(projAnswer)
+    error('Nie podano nazwy projektu.');
+end
+projectName = projAnswer{1};
+
+savePath = uigetdir(pwd, 'Wybierz katalog zapisu projektu');
+if savePath == 0
+    error('Nie wybrano katalogu.');
+end
+
+
+%% ===================== 1. GUI STANDARYZACJI =====================
+
+choice = questdlg('Czy chcesz standaryzować skale intensywności?', ...
+    'Standaryzacja skali','Tak','Nie','Nie');
+standaryzuj = strcmp(choice,'Tak');
+
+%% ===================== ROTACJA ODF – UŻYTKOWNIK =====================
+
+% >>> JEDYNA ZMIENNA DO ZMIANY <<<
+obrot = 30*degree;   % np. 30*degree, -15*degree, 0*degree
+
+% oś obrotu – jak w Twoim przykładzie
+rotAxis = vector3d(0,1,0);   % Y próbki
+
+% definicja rotacji
+rotODF = rotation('axis', rotAxis, 'angle', obrot);
+
+%% ===================== 2. ODF =====================
+
+odf_full = calcODF(pf,'silent');
+
+% >>> ROTACJA ODF <<<
+odf_full = rotODF * odf_full;
+
+SS = specimenSymmetry('222');
+odf_cut = odf_full;
+odf_cut.SS = SS;
+
+
+
+%% ===================== 3. DEFINICJA PF – NA SZTYWNO =====================
+
+millerSet = [ ...
+    Miller(1,1,1,CS), ...
+    Miller(2,0,0,CS), ...
+    Miller(2,2,0,CS) ];
+
+millerNames = {'111','200','220'};
+
+pdfMaxAuto = zeros(1,3);
+pdfMaxUser = zeros(1,3);
+
+for i = 1:3
+    pdf_tmp = calcPDF(odf_full, millerSet(i));
+    pdfMaxAuto(i) = max(pdf_tmp);
+    pdfMaxUser(i) = pdfMaxAuto(i);
+end
+
+
+
+%% ===================== 4. STANDARYZACJA PF =====================
+
+if standaryzuj
+    for i = 1:3
+        prompt = sprintf('PF (%s)\nAuto max MRD = %.2f\nPodaj max skali:', ...
+            millerNames{i}, pdfMaxAuto(i));
+        answ = inputdlg(prompt,'Standaryzacja PF',[1 50], ...
+            {num2str(pdfMaxAuto(i))});
+        if ~isempty(answ)
+            val = str2double(answ{1});
+            if ~isnan(val) && val>0
+                pdfMaxUser(i) = val;
+            end
+        end
+    end
+end
+
+
+%% ===================== 5. PF – OSOBNE FIGURY (111 / 200 / 220) =====================
+
+figPF = gobjects(1,3);
+
+for i = 1:3
+
+    figPF(i) = figure('Name',['PF (' millerNames{i} ')'], ...
+        'NumberTitle','off');
+
+    if standaryzuj
+        plotPDF(odf_full, millerSet(i), ...
+            'antipodal','smooth', ...
+            'colorrange',[0 pdfMaxUser(i)]);
+    else
+        plotPDF(odf_full, millerSet(i), ...
+            'antipodal','smooth');
+    end
+
+    hold on
+    plotPDF(odf_full, millerSet(i), ...
+        'antipodal','contour', ...
+        'lineColor','k','linewidth',1.2,'add2all');
+    hold off
+
+    cb = mtexColorbar;
+    cb.FontSize = 12;
+
+    title(['(' millerNames{i} ')'], ...
+        'FontSize',16,'FontWeight','bold')
+
+end
+
+
+
+
+%% ===================== 6. STANDARYZACJA ODF (POPRAWNA MTEX) =====================
+
+phi2vals = 0:15:75;   % MUSI być to samo co w sekcjach
+
+odfMaxAuto = max(odf_cut,'sections',phi2vals*degree);
+odfMaxUser = odfMaxAuto;
+
+if standaryzuj
+    answ = inputdlg( ...
+        sprintf('ODF max na sekcjach = %.2f\nPodaj max skali:',odfMaxAuto), ...
+        'Standaryzacja ODF',[1 50],{num2str(odfMaxAuto)});
+    if ~isempty(answ)
+        val = str2double(answ{1});
+        if ~isnan(val) && val>0
+            odfMaxUser = val;
+        end
+    end
+end
+
+
+%% ===================== 7. SEKCJE ODF =====================
+
+%% ===================== 7. SEKCJE ODF (MAPA + IZOLINIE) =====================
+
+phi2vals = 0:15:75;
+nSec = numel(phi2vals);
+
+figSections = figure('Name','ODF Sections', ...
+    'NumberTitle','off');
+
+% --- RYSOWANIE MTEX ---
+plot(odf_cut, 'sections', nSec, 'layout', [2 3], ...
+    'smooth', ...
+    'colorrange', [0 odfMaxUser]);
+
+hold on
+
+plot(odf_cut, 'sections', nSec, 'layout', [2 3], ...
+    'contour', ...
+    'lineColor','k', ...
+    'linewidth',1.1, ...
+    'add2all');
+
+hold off
+
+cb = mtexColorbar;
+cb.FontSize = 12;
+
+drawnow   % <<< MTEX kończy layout
+
+% --- FULL SCREEN (ABSOLUTNIE STABILNE) ---
+set(figSections,'Units','pixels');
+screenSize = get(0,'ScreenSize');   % [left bottom width height]
+set(figSections,'Position',screenSize);
+
+
+
+
+
+%% ===================== 8. OPISY PHI2 =====================
+
+
+%% ===================== 9. KOMPONENTY TEKSTURY =====================
+
+components = [ ...
+    orientation.goss(CS,SS), ...
+    orientation.invGoss(CS,SS), ...
+    orientation.brass(CS,SS), ...
+    orientation.cube(CS,SS), ...
+    orientation.cubeND22(CS,SS), ...
+    orientation.cubeND45(CS,SS), ...
+    orientation.cubeRD(CS,SS), ...
+    orientation.copper(CS,SS), ...
+    orientation.PLage(CS,SS), ...
+    orientation.QLage(CS,SS) ];
+
+orientationNames = {'Goss','InvGoss','Brass','Cube','CubeND22','CubeND45', ...
+    'CubeRD','Copper','PLage','QLage'};
+
+
+%% ===================== 10. UDZIAŁY OBJĘTOŚCIOWE =====================
+
+sigma = 13*degree;
+fractions = zeros(size(components));
+
+for i = 1:length(components)
+    fractions(i) = volume(odf_full,components(i),sigma)*100;
+end
+
+maxFraction = max(fractions);
+threshold = 0.2*maxFraction;
+filteredFractions = fractions;
+filteredFractions(fractions<threshold) = 0;
+randomFraction = max(100-sum(filteredFractions),0);
+
+validNames = orientationNames(filteredFractions>0);
+validFractions = filteredFractions(filteredFractions>0);
+validNames{end+1} = 'Losowe';
+validFractions(end+1) = randomFraction;
+
+
+%% ===================== 11. KOMPONENTY NA PRZEKROJACH ODF =====================
+
+figure(figSections)
+hold on
+
+for i = 1:length(components)
+    plotSection(components(i), ...
+        'add2all', ...
+        'Marker','o', ...
+        'MarkerSize',12, ...
+        'MarkerFaceColor',ind2color(i), ...
+        'MarkerEdgeColor','k', ...
+        'DisplayName',[orientationNames{i} ' ' ...
+        round2Miller(components(i),'LaTeX')]);
+end
+
+    lgd = legend('show','Interpreter','latex');
+    lgd.Location = 'eastoutside';
+    lgd.FontSize = 1.2*getMTEXpref('FontSize');
+
+
+hold off
+
+
+%% ===================== 12. WYKRES UDZIAŁÓW =====================
+
+figBar = figure('Name','Texture Fractions','NumberTitle','off', ...
+    'WindowState','maximized');
+
+bar(validFractions)
+xticklabels(validNames)
+xtickangle(45)
+ylabel('Udział [%]')
+grid on
+ylim([0 max(validFractions)*1.1])
+
+for i=1:length(validFractions)
+    text(i,validFractions(i)+0.5, ...
+        sprintf('%.2f%%',validFractions(i)), ...
+        'HorizontalAlignment','center');
+end
+
+
+%% ===================== 13. METRYKI =====================
+
+fprintf('\nTexture Index = %.4f\n', norm(odf_full)^2)
+fprintf('Entropy = %.4f\n', entropy(odf_full))
+
+
+
+
+%% ===================== 14. ZAPIS =====================
+
+if strcmp(questdlg('Czy zapisać wyniki?','Zapis','Tak','Nie','Tak'),'Tak')
+
+    if standaryzuj
+        suffix = 'standaryzowany';
+    else
+        suffix = 'niestandaryzowany';
+    end
+
+    for i = 1:3
+        saveas(figPF(i), fullfile(savePath, ...
+            [projectName '_PF_' millerNames{i} '_' suffix '.png']));
+    end
+
+    saveas(figSections, fullfile(savePath, ...
+        [projectName '_ODF_sections_' suffix '.png']))
+    saveas(figBar, fullfile(savePath, ...
+        [projectName '_Fractions_' suffix '.png']))
+
+    disp('Zapis zakończony.')
+end
+%% ===================== 14. EKSTRAKCJA ODF – PRZEKRÓJ PHI2 = 0 =====================
+
+% --- definicja siatki kątowej ---
+phi1_vals = 0:1:90;    % kolumny
+Phi_vals  = 0:1:90;    % wiersze
+phi2_val  = 0;         % stałe phi2
+
+% --- siatka kątów ---
+[PHI1, PHI] = meshgrid(phi1_vals, Phi_vals);
+
+% --- orientacje ---
+oriGrid = orientation.byEuler( ...
+    PHI1(:)*degree, ...
+    PHI(:)*degree, ...
+    phi2_val*degree*ones(numel(PHI1),1), ...
+    CS, SS);
+
+% --- ewaluacja ODF ---
+odfValues = eval(odf_cut, oriGrid);
+
+% --- RESHAPE DO MACIERZY 2D ---
+ODF_matrix = reshape(odfValues, size(PHI1));
+% wiersze  -> Phi
+% kolumny -> phi1
+
+% --- zapis do struktury ---
+ODF_phi2_0.phi1 = phi1_vals;     % [deg] -> kolumny
+ODF_phi2_0.Phi  = Phi_vals;      % [deg] -> wiersze
+ODF_phi2_0.phi2 = phi2_val;      % [deg]
+ODF_phi2_0.MRD  = ODF_matrix;    % [Phi x phi1]
+
+disp('ODF(phi2 = 0°) zapisany jako macierz 2D: wiersze = Phi, kolumny = phi1');
